@@ -151,7 +151,7 @@ https://ghfast.top/https://github.com/linguo2625469/workbuddy2api-panel/releases
 | `restart` | 重启网关 |
 | `open_panel` | 在浏览器打开官方面板，`page` 取 `accounts`（默认）或 `panel` |
 
-> 关于"空清单 = 全部保留"：agent 显式调 `keep` 传空数组时就是这个意思。设置页同理，但它会把空清单**显式**标成 `"all": true`；HTTP 接口 `POST /api/dsh-wb2api/keep` 对没带 `all` 的空清单直接返回 400——因为一次手滑的空请求就会把服务端几十个模型全写进 profile，盖掉你精挑的清单。
+> 关于"空清单 = 全部保留"：agent 显式调 `keep` 传空数组时就是这个意思。设置页则不让空清单直接落盘——想全都要请点「全部保留」（它会把当前列表全部勾上，所见即所得），一个都不勾就点保存会提示并拦下；HTTP 接口 `POST /api/dsh-wb2api/keep` 对没带 `all` 的空清单直接返回 400——因为一次手滑的空请求就会把服务端几十个模型全写进 profile，盖掉你精挑的清单。
 
 示例参数：
 
@@ -186,6 +186,19 @@ https://ghfast.top/https://github.com/linguo2625469/workbuddy2api-panel/releases
 `lib/core/service.js` 里记录的服务事件用 ISO 8601 UTC 时间戳；`wb2api.log` 是上游自己写的，格式以上游为准。
 
 排障顺序：健康检查失败 → 先看 `wb2api.log` 尾部有没有上游报错；进程不在 → 看 `dsh-wb2api.log` 里的拉起/看护记录；端口被占用 → 改 `port`。
+
+## 常见故障
+
+| 现象 | 原因与处理 |
+| --- | --- |
+| 设置页一直显示「未运行」 | 插件固定按 `http://<host>:<port>` 探活（默认 `127.0.0.1:7863`），网关实际监听的地址不是它就会这样。查 `wb2api.log` 尾部；端口被占可用 `netstat -ano \| findstr :7863`（Windows）确认。要换端口只能改插件配置里的 `host`/`port` 并重启 DSH——设置页的地址栏是只读的，插件会拒绝写别的地址，否则插件、DSH 的模型供应商与网关三方对不上。 |
+| 点「启动」立刻失败 | 失败原因现在会连 `wb2api.log` 末尾几行一起返回。常见三类：端口被占用、`config.json` 配置非法、被安全软件拦截。 |
+| 「重新下载安装」秒完成 | 已经装好且没勾选「强制重装」时会复用现有可执行文件（日志写「复用已安装的可执行文件」）。要升级请勾上强制重装，或用工具 `install` 带 `force: true`。 |
+| 下载很慢或卡住 | 国内直连 GitHub 常见，实测 3.5 MB 可能要几分钟。用镜像：配置项 `mirror`（例如 `https://ghproxy.net/`），或工具 `install` 的 `mirror` 参数。 |
+| DSH 里模型请求报凭据错误 | `WB2API_KEY` 必须与 `config.json` 的 `api_key` 一致。看 `GET /api/dsh-wb2api/status` 的凭据字段，或在设置页「高级」里重填 `api_key` 保存。 |
+| 设置页整块不出现 | 要么宿主路由没注册（`dsh-wb2api.log` 里应有「已注册设置页路由 /api/dsh-wb2api」），要么浏览器拿的是旧客户端 bundle。先刷新页面，再重启 DSH。 |
+| 改了配置不生效 | 改 `cordis.patch.yml` 的 config 会触发热重载；但**替换同一包名的代码后必须重启 DSH**，宿主与客户端模块都是启动时读进内存的。 |
+| 日志越来越大 | `dsh-wb2api.log` 超过 1 MB 会滚动成 `.1`（只留一代）；`wb2api.log` 是上游自己追加的，必要时停服务后手动清理。 |
 
 ## 与 DSH 生命周期
 

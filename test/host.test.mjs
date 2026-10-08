@@ -11,6 +11,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:net';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -25,6 +26,22 @@ const PORT = 7869;
 const KEY = 'test-key';
 const BASE = `http://127.0.0.1:${PORT}`;
 const MOUNT_KEY = Symbol.for('dsh.wb2api.mounted');
+
+/**
+ * 取一个当前空闲的端口。
+ * 不能写死别的端口：`node --test` 会并行跑不同测试文件，contract.test.mjs 正占着 7870
+ * （曾经用 PORT+1 就踩上了，导致"启动必须失败"的用例误判成健康）。
+ */
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const srv = createServer();
+    srv.once('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const port = srv.address().port;
+      srv.close(() => resolve(port));
+    });
+  });
+}
 
 let stub;
 let installDir;
@@ -423,10 +440,54 @@ test('service 路由只接受三种动作', async () => {
   assert.match(bad.json.error, /explode/);
 });
 
+test('service 路由：启动失败时返回 ok:false 与原因，而不是假成功', async () => {
+  // 真机痛点：以前这个分支忽略 startService 的结果，设置页点"启动"失败也显示成功。
+  const keepRecord = globalThis.__hostRecord;
+  delete globalThis[MOUNT_KEY];
+  const made = makeCtx();
+  // 换个真的空闲端口，逼 ensureService 去 spawn；exe 是上面写的空文件（存在但不是程序）。
+  const deadPort = await freePort();
+  const handle = apply(made.context, {
+    installDir,
+    host: '127.0.0.1',
+    port: deadPort,
+    autoStart: false,
+    autoInstall: false,
+    autoOpenPanelWhenEmpty: false,
+    killOnExit: false,
+  });
+  try {
+    assert.ok(handle, '第二个实例应能挂载（已清掉单实例标记）');
+    const res = await call(made.record.routes[0], { method: 'POST', path: '/service', body: { action: 'start' } });
+    assert.equal(res.status, 200);
+    assert.equal(res.json.ok, false, '启动失败必须是 ok:false');
+    assert.match(res.json.error, /拉起失败|无法启动|可执行文件/, `要带回失败原因：${res.json.error}`);
+    assert.ok(res.json.service, '失败时也要带上服务快照');
+  } finally {
+    handle.dispose();
+    globalThis.__hostRecord = keepRecord;
+  }
+});
+
 test('config 路由校验 host:port 并保留 api_key', async () => {
   const route = globalThis.__hostRecord.routes[0];
   const bad = await call(route, { method: 'POST', path: '/config', body: { server: 'not a server' } });
   assert.equal(bad.status, 400);
+
+  // 换端口必须被挡：插件健康检查与 DSH 里 provider 的 baseURL 都写死 cfg.host:cfg.port，
+  // 放行的话网关换了端口，插件会一直报"未运行"。
+  const wrongPort = await call(route, { method: 'POST', path: '/config', body: { server: '127.0.0.1:9999' } });
+  assert.equal(wrongPort.status, 400, '换端口必须拒绝');
+  assert.match(wrongPort.json.error, /换端口/);
+
+  const remote = await call(route, { method: 'POST', path: '/config', body: { server: `10.0.0.5:${PORT}` } });
+  assert.equal(remote.status, 400, '只接受本机地址');
+
+  const alias = await call(route, { method: 'POST', path: '/config', body: { server: `localhost:${PORT}` } });
+  assert.equal(alias.status, 200, 'localhost 是等价的本机地址');
+
+  const wildcard = await call(route, { method: 'POST', path: '/config', body: { server: `0.0.0.0:${PORT}` } });
+  assert.equal(wildcard.status, 200, '监听 0.0.0.0 也合法，插件照样能经 127.0.0.1 访问');
 
   const good = await call(route, { method: 'POST', path: '/config', body: { server: `127.0.0.1:${PORT}` } });
   assert.equal(good.status, 200);

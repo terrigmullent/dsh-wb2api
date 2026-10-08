@@ -466,7 +466,18 @@ function createHarness(options = {}) {
   sandbox.document = doc;
   sandbox.window.document = doc;
   sandbox.window.open = (...args) => {
-    opened.push(args);
+    // 真实浏览器返回一个 window 句柄：既可能是空白占位窗（随后写 location.href），
+    // 也可能是弹窗被拦截时返回的 null。桩给出带 location/close 的句柄，才验得了这两条路。
+    const handle = {
+      args,
+      closed: false,
+      location: { href: '' },
+      close() {
+        this.closed = true;
+      },
+    };
+    opened.push(handle);
+    return handle;
   };
   sandbox.window.__ModuleLoader__ = {
     load(reg) {
@@ -784,11 +795,11 @@ function defaultRoutes(record, extra = {}) {
   throw new Error('测试未覆盖的请求: ' + record.method + ' ' + record.url);
 }
 
-/** 源码里所有 t('…') / t("…") 的字面 key（动态调用由测试单独禁止）。 */
+/** 源码里所有 t('…') / tr('…') 的字面 key（动态调用由测试单独禁止）。 */
 function literalTKeys(source) {
   const keys = new Set();
-  for (const m of source.matchAll(/\bt\(\s*'([^']+)'/g)) keys.add(m[1]);
-  for (const m of source.matchAll(/\bt\(\s*"([^"]+)"/g)) keys.add(m[1]);
+  for (const m of source.matchAll(/\b(?:t|tr)\(\s*'([^']+)'/g)) keys.add(m[1]);
+  for (const m of source.matchAll(/\b(?:t|tr)\(\s*"([^"]+)"/g)) keys.add(m[1]);
   return [...keys].sort();
 }
 
@@ -867,6 +878,7 @@ test('文案：源码里 t() 用到的每个 key 都必须在 zh/en 字典里存
 
   // 真机页面直接显示 t() 的第一个参数，所以 t() 只允许传字面量：
   // 动态拼 key 会让本测试失效，也会让漏 key 变得不可静态发现。
+  // 例外：控制器里的 tr(key) 包装（它内部用别名 translate 调 t，源码里看不见 t(变量)）。
   const dynamic = [...CLIENT_SRC.matchAll(/\bt\(\s*([^'"\s)])/g)].map((m) => m[1]);
   assert.deepEqual([...new Set(dynamic)], [], 't() 只允许传字符串字面量，发现动态调用首字符: ' + dynamic.join(', '));
 
@@ -1013,7 +1025,16 @@ test('HTTP 契约：路径无前导斜杠，service/keep/config/open-panel 的�
   const panel = seen.find((c) => c.url.endsWith('api/dsh-wb2api/open-panel'));
   assert.ok(panel, '必须 POST open-panel');
   assert.deepEqual(panel.body, { page: 'accounts' });
-  assert.equal(booted.harness.opened.length, 1, '打开面板应走 window.open');
+  // B7：await 之后用户手势已失效，必须先用空白窗口占位、拿到地址再写 location.href，
+  // 否则浏览器会拦掉弹窗（早期实现是 await 之后才 window.open，直接被拦）。
+  assert.equal(booted.harness.opened.length, 1, '只应开一个窗口（占位窗），地址靠 location.href 写进去');
+  assert.equal(booted.harness.opened[0].args[0], '', '第一个窗口必须是空白占位窗');
+  assert.equal(
+    booted.harness.opened[0].location.href,
+    'http://127.0.0.1:7863/panel',
+    '占位窗要导航到宿主返回的地址',
+  );
+  assert.equal(booted.harness.opened[0].closed, false, '成功时不能把窗口关掉');
   controller.dispose();
 });
 
@@ -1263,3 +1284,83 @@ test('控制器释放：dispose 之后不得残留定时器', async () => {
   booted.controller.dispose();
   assert.equal(booted.harness.pendingTimers(), 0, 'dispose 后不得有残留定时器');
 });
+
+test('账号列举失败：宿主写在 accountError 里的原因必须浮现，不能装作"没有账号"', async () => {
+  const booted = boot({
+    onRequest(record) {
+      if (record.url.endsWith('api/dsh-wb2api/status')) {
+        return Object.assign({}, STATUS_OK, { accountError: '连不上 127.0.0.1:7863' });
+      }
+      return defaultRoutes(record);
+    },
+  });
+  await booted.controller.refresh();
+  const error = String(booted.controller.getSnapshot().error || '');
+  assert.ok(error.includes('连不上 127.0.0.1:7863'), 'accountError 必须显示在错误条里，实际: ' + error);
+  assert.ok(!error.includes('error.loadFailed'), '前缀必须走字典而不是裸 key，实际: ' + error);
+  booted.controller.dispose();
+});
+
+test('取消登录：取消之后 login/poll 必须停止（以前取消完还会继续轮询 5 分钟）', async () => {
+  let polls = 0;
+  const booted = boot({
+    onRequest(record) {
+      if (record.url.endsWith('api/dsh-wb2api/login/start')) {
+        return { ok: true, state: 'st-cancel', url: 'https://example.invalid/auth?st=cancel' };
+      }
+      if (record.url.includes('api/dsh-wb2api/login/poll')) {
+        polls += 1;
+        return { ok: true, done: false };
+      }
+      return defaultRoutes(record);
+    },
+  });
+  const controller = booted.controller;
+  await controller.loginStart('cn');
+  await waitTicks(4);
+  booted.harness.advance(3000);
+  await waitTicks(4);
+  assert.ok(polls >= 1, '轮询应该已经开始，实际 ' + polls);
+
+  controller.cancelLogin();
+  const before = polls;
+  booted.harness.advance(60 * 60 * 1000); // 快进一小时
+  await waitTicks(6);
+  assert.equal(polls, before, '取消之后不得再发起 login/poll，实际多发了 ' + (polls - before));
+  assert.equal(booted.harness.pendingTimers(), 0, '取消之后不得残留轮询定时器');
+  controller.dispose();
+});
+
+test('安装轮询：任务不结束时必须有总时长上限，不能无限轮询', async () => {
+  let jobPolls = 0;
+  const booted = boot({
+    onRequest(record) {
+      if (record.url.endsWith('api/dsh-wb2api/install')) return { ok: true, jobId: 'job-slow' };
+      if (record.url.includes('api/dsh-wb2api/job')) {
+        jobPolls += 1;
+        return { ok: true, job: { id: 'job-slow', state: 'running', progress: null, message: '下载中', log: [] } };
+      }
+      return defaultRoutes(record);
+    },
+  });
+  const controller = booted.controller;
+  await controller.install({ force: false });
+  await waitTicks(4);
+  assert.ok(jobPolls >= 1, '安装后应立刻轮询一次，实际 ' + jobPolls);
+
+  // 快进 31 分钟（JOB_TIMEOUT_MS = 30 分钟），期间按轮询间隔推进假时钟
+  for (let i = 0; i < 32; i += 1) {
+    booted.harness.advance(60 * 1000);
+    await waitTicks(4);
+  }
+  const job = controller.getSnapshot().job;
+  assert.ok(job, '应仍保留任务状态');
+  assert.equal(job.state, 'error', '超时后必须停在 error 而不是永远 running');
+  assert.ok(String(job.error).includes('超时'), '超时文案要说清原因，实际: ' + String(job.error));
+  const after = jobPolls;
+  booted.harness.advance(10 * 60 * 1000);
+  await waitTicks(4);
+  assert.equal(jobPolls, after, '超时之后不得再轮询');
+  controller.dispose();
+});
+
