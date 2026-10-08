@@ -576,18 +576,11 @@ function createCtx(overrides = {}) {
       state.binds.push(ns);
       const found = state.locales.find((l) => l.ns === ns);
       const dict = (found && found.dicts && found.dicts.zh) || {};
-      const lookup = (key) => {
-        if (Object.prototype.hasOwnProperty.call(dict, key)) return dict[key];
-        // 真实 locale 服务用点号路径（如 advanced.title）取嵌套译文
-        let node = dict;
-        for (const part of String(key).split('.')) {
-          if (node === null || typeof node !== 'object' || !Object.prototype.hasOwnProperty.call(node, part)) {
-            return undefined;
-          }
-          node = node[part];
-        }
-        return node;
-      };
+      // 真实 locale 服务按 key 原文在字典里平查（dsh-client-locale README 原话：
+      // “For each key, lookup walks … then displays the key itself.”），**不做点号路径解析**。
+      // 这里必须同样平查，否则测试会替真实运行时"猜对"嵌套字典 —— 曾经因为桩里写了
+      // 点号遍历，嵌套字典在单测里全绿、真机满屏 "service.title"。
+      const lookup = (key) => (Object.prototype.hasOwnProperty.call(dict, key) ? dict[key] : undefined);
       const t = (key, params) => {
         let text = lookup(key);
         if (text === undefined || text === null || typeof text === 'object') return key;
@@ -791,13 +784,12 @@ function defaultRoutes(record, extra = {}) {
   throw new Error('测试未覆盖的请求: ' + record.method + ' ' + record.url);
 }
 
-function flatten(value, prefix = '', out = {}) {
-  for (const key of Object.keys(value)) {
-    const path = prefix ? prefix + '.' + key : key;
-    if (value[key] && typeof value[key] === 'object') flatten(value[key], path, out);
-    else out[path] = value[key];
-  }
-  return out;
+/** 源码里所有 t('…') / t("…") 的字面 key（动态调用由测试单独禁止）。 */
+function literalTKeys(source) {
+  const keys = new Set();
+  for (const m of source.matchAll(/\bt\(\s*'([^']+)'/g)) keys.add(m[1]);
+  for (const m of source.matchAll(/\bt\(\s*"([^"]+)"/g)) keys.add(m[1]);
+  return [...keys].sort();
 }
 
 // ------------------------------------------------------------------- 测试
@@ -840,13 +832,18 @@ test('apply 契约：注册 settings.section(id=wb2api)、locale 双语对齐、
   const { ns, dicts } = booted.state.locales[0];
   assert.equal(ns, 'dsh-wb2api');
   assert.ok(dicts.zh && dicts.en, 'zh/en 必须齐全');
-  const zhFlat = flatten(dicts.zh);
-  const enFlat = flatten(dicts.en);
-  const zhKeys = Object.keys(zhFlat);
-  assert.deepEqual(Object.keys(enFlat).sort(), zhKeys.slice().sort(), 'zh/en 的译文键必须一一对应');
+  const zhKeys = Object.keys(dicts.zh);
+  const enKeys = Object.keys(dicts.en);
+  assert.deepEqual(enKeys.slice().sort(), zhKeys.slice().sort(), 'zh/en 的译文键必须一一对应');
   assert.ok(zhKeys.length >= 60, '文案键数量应与页面规模相称，实际 ' + zhKeys.length);
-  assert.ok(/[\u4e00-\u9fff]/.test(Object.values(zhFlat).join('\n')), '中文文案必须存在');
-  assert.ok(!/[\u4e00-\u9fff]/.test(Object.values(enFlat).join('\n')), '英文文案不应混入中文');
+  // key 必须是带点号的**扁平字面量**，值必须是字符串：嵌套对象在真实 locale 里查不到，
+  // 页面会直接显示成 key 本身（见 client.js 文案区注释与 locale.test.mjs）。
+  for (const [label, dict] of [['zh', dicts.zh], ['en', dicts.en]]) {
+    const nested = Object.keys(dict).filter((k) => typeof dict[k] !== 'string');
+    assert.deepEqual(nested, [], label + ' 字典不能有嵌套对象（key 要写成扁平点号字面量），实际: ' + nested.join(', '));
+  }
+  assert.ok(/[\u4e00-\u9fff]/.test(Object.values(dicts.zh).join('\n')), '中文文案必须存在');
+  assert.ok(!/[\u4e00-\u9fff]/.test(Object.values(dicts.en).join('\n')), '英文文案不应混入中文');
   assert.deepEqual(booted.state.binds, ['dsh-wb2api'], '必须用 locale.bind 取 t');
 
   assert.ok(booted.state.effects.length >= 2, '至少有 locale 与生命周期两个 effect，实际 ' + booted.state.effects.length);
@@ -855,6 +852,27 @@ test('apply 契约：注册 settings.section(id=wb2api)、locale 双语对齐、
   }
   const disposers = booted.state.disposers.filter((d) => typeof d === 'function');
   assert.ok(disposers.length >= 2, 'effect 必须返回清理函数，实际 ' + disposers.length);
+});
+
+test('文案：源码里 t() 用到的每个 key 都必须在 zh/en 字典里存在（漏一个就满屏 key）', () => {
+  const booted = boot({ onRequest: (r) => defaultRoutes(r) });
+  const { dicts } = booted.state.locales[0];
+  const used = literalTKeys(CLIENT_SRC);
+  assert.ok(used.length >= 60, 't() 字面 key 数量应与页面规模相称，实际 ' + used.length);
+
+  const missingZh = used.filter((k) => !Object.prototype.hasOwnProperty.call(dicts.zh, k));
+  const missingEn = used.filter((k) => !Object.prototype.hasOwnProperty.call(dicts.en, k));
+  assert.deepEqual(missingZh, [], 'zh 缺失这些 t() key（页面会显示 key 原文）: ' + missingZh.join(', '));
+  assert.deepEqual(missingEn, [], 'en 缺失这些 t() key（页面会显示 key 原文）: ' + missingEn.join(', '));
+
+  // 真机页面直接显示 t() 的第一个参数，所以 t() 只允许传字面量：
+  // 动态拼 key 会让本测试失效，也会让漏 key 变得不可静态发现。
+  const dynamic = [...CLIENT_SRC.matchAll(/\bt\(\s*([^'"\s)])/g)].map((m) => m[1]);
+  assert.deepEqual([...new Set(dynamic)], [], 't() 只允许传字符串字面量，发现动态调用首字符: ' + dynamic.join(', '));
+
+  // 反向：字典里有、但源码没用到的 key 只提示，不作为失败（保留给后续文案）
+  const unused = Object.keys(dicts.zh).filter((k) => !used.includes(k));
+  if (unused.length) console.log('（提示）字典里暂未使用的 key: ' + unused.join(', '));
 });
 
 test('样式：单个 <style> 注入 head、不碰 body、二次 apply 幂等、只用 --dsw-* token', () => {
@@ -964,6 +982,19 @@ test('HTTP 契约：路径无前导斜杠，service/keep/config/open-panel 的�
   const keep = seen.find((c) => c.url.endsWith('api/dsh-wb2api/keep'));
   assert.ok(keep, '必须 POST keep');
   assert.deepEqual(keep.body, { keep: ['cn:deepseek-v4.1-flash', 'global:gpt-5.1'], all: false });
+
+  // 控制器的提示文案必须走当前语言的字典：字典若写成嵌套对象（真实 locale 只按 key 原文平查），
+  // 这里会退化成裸 key "models.saved"，正是设置页满屏英文 key 的那次事故。
+  const savedNotice = controller.getSnapshot().notice;
+  assert.ok(savedNotice, '保存模型后必须有提示');
+  assert.ok(
+    String(savedNotice.text).includes('已保留 2 个模型'),
+    '提示必须来自字典（裸 key 说明字典形状/键名不对），实际: ' + String(savedNotice.text),
+  );
+  assert.ok(
+    !String(savedNotice.text).includes('models.saved'),
+    '提示不得是裸 key，实际: ' + String(savedNotice.text),
+  );
 
   seen.length = 0;
   await controller.saveKeep([]);
