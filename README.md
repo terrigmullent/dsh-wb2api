@@ -67,6 +67,9 @@ target: C:\path\to\dsh-wb2api
 3. 安装时生成 `config.json`：含一个随机生成的 43 位 `api_key`，并把上游默认的 `":7863"` 收紧为 `127.0.0.1:7863`（只监听回环，不暴露到局域网）。`auths/` 与 `data/` 目录同时建好。
 4. 点「添加账号（国内/国际）」。插件调 `/panel/api/login/start` 拿到授权链接 → 你用浏览器打开并登录 → 插件轮询 `/panel/api/login/poll`，成功后账号出现在列表里。
 5. 在「模型」分区勾选要保留的模型 → 保存。DSH 模型选择器里**下一个请求**生效（不需要重启）。
+6. 「用量」分区（默认展开）显示网关自己统计的消耗：每个账号的请求数、成功数、输入/输出 tokens、平均每请求 tokens、最近延迟与生成速度、最近使用时间，底部是合计行，另有一张按模型聚合的积分费率表（`cost_per_1k` 是该模型样本的平均值，单位为积分/千 tokens）。
+
+> 用量的数字来自网关的 `state.json`（`/panel/api/overview` 的 `token_usage` / `model_costs`），**重启网关不会清零**，清零要删 `data/`；`tokens = 输入 + 输出`。这里是网关侧的消耗，DSH 会话自身的用量不在此处。刚装的账号还没处理过请求时该账号不显示用量，整池都没数据时分区显示「还没有用量统计」。
 
 ### 镜像用法
 
@@ -143,7 +146,7 @@ https://ghfast.top/https://github.com/linguo2625469/workbuddy2api-panel/releases
 
 | action | 用途 |
 | --- | --- |
-| `status` | 状态总览：服务是否在跑、pid、健康检查、账号数与积分、当前保留的模型 |
+| `status` | 状态总览：服务是否在跑、pid、健康检查、账号数与积分、每个账号的用量（请求数/成功数/tokens/最近速度）、当前保留的模型 |
 | `install` | 从 GitHub Release 下载并安装上游二进制（sha256 校验）；可带 `force`、`mirror`、`version` |
 | `login` | 发起添加账号流程（`realm` 取 `cn`/`global`），返回授权链接与 `state`；带 `state` 再调一次可查是否完成 |
 | `models` | 列出服务端模型，★ 标记已保留；可用 `query` 按 id/名称过滤 |

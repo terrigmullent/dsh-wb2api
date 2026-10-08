@@ -744,6 +744,19 @@ const STATUS_OK = {
       creditsTotal: 500,
       disabled: false,
       expiry: '2026-12-31T00:00:00.000Z',
+      requestCount: 2030,
+      usageCount: 2011,
+      successCount: 2014,
+      totalTokens: 197831916,
+      promptTokens: 195810282,
+      completionTokens: 2021634,
+      lastLatencyMs: 7207,
+      lastTokensPerSecond: 129.59622589149438,
+      lastUsedAt: '2026-10-08T06:31:36.530Z',
+      lastModel: 'cn:deepseek-v4.1-flash',
+      modelCosts: [
+        { model: 'cn:deepseek-v4.1-flash', costPer1k: 0.001325659805367059, samples: 233, lastSeen: '2026-10-08T06:31:36.530Z' },
+      ],
     },
     { uid: 'u-2', nickname: 'Global One', realm: 'global', credits: 8, creditsTotal: 20, disabled: true, expiry: null },
   ],
@@ -933,6 +946,24 @@ test('渲染契约：注册项组件不抛错，四块内容都在，controller/
   assert.ok(text.includes('账号'), '账号卡片应有可读文案');
   assert.ok(text.includes('模型'), '模型卡片应有可读文案');
   assert.ok(text.includes('高级'), '高级卡片应有可读文案');
+  booted.controller.dispose();
+});
+
+test('用量：设置页要摊开 token 统计与按模型费率，不能只去官方面板看', async () => {
+  const booted = boot({ onRequest: (r) => defaultRoutes(r) });
+  booted.runEffects();
+  await waitTicks(10);
+  booted.render(); // 首次渲染还是空状态，status 到位后要重渲染一次
+  const text = booted.text();
+  assert.ok(text.includes('用量'), '应有用量卡片');
+  assert.ok(text.includes('197.8M'), '累计 tokens 用紧凑写法: ' + text.slice(0, 300));
+  assert.ok(text.includes('2,030'), '请求数要带千分位');
+  assert.ok(text.includes('2,014'), '成功数要显示');
+  assert.ok(text.includes('195.8M / 2.0M'), '输入 / 输出要拆开显示');
+  assert.ok(text.includes('129.6 tok/s'), '最近速度要显示');
+  assert.ok(text.includes('0.0013'), '按模型费率要显示');
+  assert.ok(text.includes('合计'), '要有合计行');
+  assert.equal(text.includes('usage.'), false, '不得把 key 当文案显示');
   booted.controller.dispose();
 });
 

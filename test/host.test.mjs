@@ -208,7 +208,20 @@ before(async () => {
     disabled: false,
     cooling: false,
     in_flight: 0,
-    token_usage: { last_model: 'alpha', total_tokens: 12345, request_count: 7, last_latency_ms: 1200 },
+    token_usage: {
+      last_model: 'alpha',
+      total_tokens: 197831916,
+      request_count: 2030,
+      last_latency_ms: 7207,
+      usage_count: 2011,
+      prompt_tokens: 195810282,
+      completion_tokens: 2021634,
+      last_tokens_per_second: 129.596,
+      last_used_at: '2026-10-08T06:31:36.530Z',
+    },
+    success_count: 2014,
+    last_success: '2026-10-08T06:31:32.000Z',
+    model_costs: [{ model: 'cn:alpha', cost_per_1k: 0.001325659805367059, last_seen: '2026-10-08T06:31:36.530Z', samples: 233 }],
   }));
   writeFileSync(statePath, JSON.stringify({ accounts }, null, 2));
   writeFileSync(join(installDir, exeNameFor(detectTarget().os)), '');
@@ -324,6 +337,16 @@ test('GET status 返回服务/账号/模型快照', async () => {
   assert.equal(res.json.accounts.length, 2);
   assert.equal(res.json.accounts[0].nickname, '测试账号1');
   assert.ok(res.json.accounts[0].expiry, '应带最早到期时间');
+  // 用量统计必须透传给设置页（否则「用量」卡片永远是空的）
+  assert.equal(res.json.accounts[0].requestCount, 2030);
+  assert.equal(res.json.accounts[0].totalTokens, 197831916);
+  assert.equal(res.json.accounts[0].promptTokens, 195810282);
+  assert.equal(res.json.accounts[0].completionTokens, 2021634);
+  assert.equal(res.json.accounts[0].successCount, 2014);
+  assert.equal(res.json.accounts[0].lastTokensPerSecond, 129.596);
+  assert.equal(res.json.accounts[0].modelCosts.length, 1);
+  assert.equal(res.json.accounts[0].modelCosts[0].model, 'cn:alpha');
+  assert.equal(res.json.accounts[0].lastModel, 'alpha');
   assert.equal(res.json.models.available, 6);
   assert.deepEqual(res.json.models.keep, ['cn:alpha']);
   assert.equal(res.json.install.busy, false);
@@ -502,6 +525,9 @@ test('workbuddy 工具复用同一批宿主方法', async () => {
   const status = await tool.execute({ action: 'status' });
   assert.match(status.text, /服务：已安装/);
   assert.match(status.text, /测试账号1/);
+  // agent 侧的 status 文本也要带用量摘要，不然问「用了多少」只能拿到一句「运行中」
+  assert.match(status.text, /用量：2030 次请求（成功 2014），累计 197\.8M tokens/);
+  assert.match(status.text, /129\.6 tok\/s/);
 
   const models = await tool.execute({ action: 'models', query: 'alpha' });
   assert.match(models.text, /cn:alpha/);

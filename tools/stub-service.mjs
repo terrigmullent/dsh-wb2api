@@ -123,7 +123,17 @@ const server = createServer((req, res) => {
       disabled: false,
       cooling: false,
       in_flight: 0,
-      token_usage: { last_model: 'alpha', total_tokens: 12345, request_count: 7, last_latency_ms: 1200 },
+      token_usage: {
+        last_model: 'alpha',
+        total_tokens: 12345,
+        request_count: 7,
+        last_latency_ms: 1200,
+        usage_count: 7,
+        prompt_tokens: 11000,
+        completion_tokens: 1345,
+        last_tokens_per_second: 88.5,
+        last_used_at: new Date().toISOString(),
+      },
     };
     next.accounts.push(account);
     saveState(next);
