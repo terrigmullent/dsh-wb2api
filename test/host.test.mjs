@@ -469,3 +469,38 @@ test('dispose 撤销路由/工具并解除挂载标记', () => {
   assert.equal(globalThis[MOUNT_KEY], undefined, '卸载后应能重新挂载');
   assert.equal(existsSync(join(installDir, 'dsh-wb2api.log')), true, '插件日志应落在 installDir');
 });
+
+test('冷启动：webServer 晚于插件就绪时，用 ctx.inject 等到它再注册路由', async () => {
+  // 真机踩过的坑：冷启动时 apply 里 ctx.get('webServer') 还是 undefined，
+  // 结果设置页路由没注册，整个设置页 401。这里锁住 ctx.inject 这条等待路径。
+  const made = makeCtx();
+  let injected = null;
+  const context = {
+    ...made.context,
+    get: (service) => (service === 'webServer' ? undefined : made.context.get(service)),
+    inject: (deps, callback) => {
+      injected = { deps, callback };
+    },
+  };
+  delete globalThis[MOUNT_KEY];
+  const handle = apply(context, { installDir, autoStart: false, autoInstall: false, killOnExit: false });
+  try {
+    assert.deepEqual(injected?.deps, ['webServer'], '应当用 ctx.inject 等 webServer');
+    assert.equal(made.record.routes.length, 0, 'webServer 还没出现时不该注册路由');
+
+    // cordis 在服务就绪后会运行回调，回调收到的是带该服务的子作用域
+    // （真机上就是这样：父 ctx 拿不到，注入出来的 scoped 能拿到）
+    const cleanups = [];
+    const ws = made.context.get('webServer');
+    injected.callback({ webServer: ws, effect: (fn, label) => cleanups.push([fn(), label]) });
+    assert.equal(made.record.routes.length, 1, 'webServer 就绪后应注册路由');
+    assert.equal(made.record.routes[0].path, '/api/dsh-wb2api');
+    assert.equal(cleanups.length, 1);
+
+    // 子作用域清理：撤销路由，dispose 时不再重复撤销
+    cleanups[0][0]();
+    assert.equal(made.record.routeDisposed, 1);
+  } finally {
+    handle.dispose();
+  }
+});
