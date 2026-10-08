@@ -25,7 +25,7 @@ lib/core/workspace.js        config.json 生成与修补、api_key 生成与读�
 lib/core/service.js          进程生命周期：启动、接管、健康检查、看护重启、退出清理
 lib/core/wb2api.js           本地网关的 HTTP 客户端与模型档案映射
 lib/core/models.js           keepModels → DSH 模型清单的纯函数计算
-test/                        node --test test/ 的离线测试（真实网络测试默认跳过）
+test/                        离线测试（在仓库根目录跑 node --test；真实网络测试默认跳过）
 ```
 
 ## 安装
@@ -37,9 +37,11 @@ test/                        node --test test/ 的离线测试（真实网络测
 **b) 用 plugin_manager 工具（推荐）。** `target` 写 git URL 或本地绝对路径：
 
 ```
-target: https://github.com/<OWNER>/dsh-wb2api
+target: https://github.com/terrigmullent/dsh-wb2api
 target: C:\path\to\dsh-wb2api
 ```
+
+也可以先 `git clone https://github.com/terrigmullent/dsh-wb2api`，再把 clone 出来的目录绝对路径当 `target`——这种装法得到的是 `link:` 依赖，改代码重启 DSH 就生效。
 
 `dsh.profile.bundles` 由 plugin-manager 维护——它把包名追加到这个有序列表里（组合包开关就是这个列表）。**不要手改 profile 的 `package.json`**（官方禁止）。用本地路径安装得到的是 `link:` 依赖 + 指向仓库目录的 Junction，所以改完代码重启 DSH 就生效，不需要重新复制。
 
