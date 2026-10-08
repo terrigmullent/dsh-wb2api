@@ -41,9 +41,20 @@ target: https://github.com/<OWNER>/dsh-wb2api
 target: C:\path\to\dsh-wb2api
 ```
 
-`dsh.profile.bundles` 由 plugin-manager 维护，**不要手改 profile 的 `package.json`**（官方禁止）。替换同版本包之后**必须重启 DSH**，否则加载的还是旧的 JS。
+`dsh.profile.bundles` 由 plugin-manager 维护——它把包名追加到这个有序列表里（组合包开关就是这个列表）。**不要手改 profile 的 `package.json`**（官方禁止）。用本地路径安装得到的是 `link:` 依赖 + 指向仓库目录的 Junction，所以改完代码重启 DSH 就生效，不需要重新复制。
 
-**c) 手动放目录（不推荐，只用于排障）。** 把仓库目录放到 `$DSH_HOME/profiles/<profile>/node_modules/dsh-wb2api`，然后重启 DSH。
+要改插件配置，就在 profile 的 `cordis.patch.yml` 里按 id 覆盖（官方写插件开关用的也是这里）：
+
+```yaml
+- id: dsh-wb2api
+  config:
+    installDir: /home/you/.dsh-wb2api
+    autoInstall: false
+```
+
+**按 id 覆盖会替换整个 `config` 段，不做深度合并**，所以保留的字段要写全。替换同名包、或改过 `lib/*.js` 之后**必须重启 DSH**：热重载不会重新求值已经加载的宿主模块，改文件不生效。
+
+**c) 手动放目录（不推荐，只用于排障）。** 把仓库目录放到 `$DSH_HOME/profiles/<profile>/node_modules/dsh-wb2api`，再把包名加进 profile `package.json` 的 `dsh.profile.bundles`，然后重启 DSH。
 
 依赖只有 Node 内置模块，不需要 `pnpm install`。
 
