@@ -1,0 +1,26 @@
+# dependencies
+node_modules/
+
+# generated / downloaded at runtime: never commit the gateway or its credentials
+.dsh-wb2api/
+.download/
+config.json
+auths/
+data/
+*.pid
+
+# logs
+*.log
+
+# local test leftovers
+stub-state.json
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+
+# packaging
+*.tgz
+
+# local secrets
+.env

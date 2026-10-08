@@ -1,0 +1,9 @@
+# 统一用 LF：插件包要在 Windows/macOS/Linux 上都能直接跑，
+# 避免 CRLF 让 Node 的 shebang/脚本解析或官方 lint 出问题。
+* text=auto eol=lf
+
+# 二进制资产别做行尾转换
+*.png binary
+*.zip binary
+*.tar.gz binary
+*.exe binary

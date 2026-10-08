@@ -1,0 +1,29 @@
+# dsh-wb2api — DSH bundle patch.
+#
+# Everything below is optional: with no `config` the plugin uses these defaults
+#   installDir  ~/.dsh-wb2api                (binaries + generated downloads)
+#   port        7863                          (loopback only)
+#   keepModels  []                            (empty = keep every model)
+#   autoStart   true                          (start the gateway when DSH starts)
+#   killOnExit  true                          (stop the gateway when DSH exits)
+#
+# Example of overriding a few of them:
+#
+# - insert:
+#     - id: dsh-wb2api
+#       name: 'dsh-wb2api'
+#       config:
+#         installDir: 'C:\Users\me\.dsh-wb2api'
+#         port: 7863
+#         autoStart: true
+#         killOnExit: true
+#         autoInstall: false
+#         autoOpenPanelWhenEmpty: true
+#         watchdogSeconds: 30
+#         keepModels:
+#           - 'cn:deepseek-v4.1-flash'
+#           - 'cn:hy3'
+
+- insert:
+    - id: dsh-wb2api
+      name: 'dsh-wb2api'
